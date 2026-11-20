@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Love Heart</title>
+    <style>
+        body {
+            margin: 0; padding: 0; background-color: #060208;
+            overflow: hidden; display: flex; justify-content: center; align-items: center;
+            height: 100vh; touch-action: none;
+            cursor: pointer;
+        }
+        canvas { display: block; }
+        
+        /* Стили для подсказки */
+        #play-hint {
+            position: absolute;
+            bottom: 30px;
+            color: rgba(255, 180, 180, 0.6);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            letter-spacing: 1px;
+            pointer-events: none;
+            animation: pulse 2s infinite;
+            transition: opacity 1s;
+            z-index: 10;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
+        .hidden { opacity: 0 !important; }
+
+        /* Стили для водяного знака */
+        #watermark {
+            position: absolute;
+            bottom: 15px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.2); /* Белый, 20% прозрачности */
+            font-family: 'Arial', sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            pointer-events: none; /* Чтобы клик проходил сквозь него */
+            z-index: 100;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    
+    <!-- Водяной знак -->
+    <div id="watermark">SKVIZI</div>
+
+    <div id="play-hint">Коснись экрана, чтобы включить музыку ♥</div>
+
+    <audio id="bg-music" loop>
+        <source src="music.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const music = document.getElementById('bg-music');
+        const hint = document.getElementById('play-hint');
+        let musicStarted = false;
+
+        // --- КОНСТАНТЫ ---
+        const SC = 21;
+        const OY = 20;
+        const DURATION = 16;
+        const ANIM = 42;
+        const LIFT = 34;
+        const GAP = 6;
+        const SIZES = [9, 10, 11, 12];
+        const FONT_FAMILY = "Arial";
+        const BG_HEX = "#060208";
+        const BG_RGB = {r: 6, g: 2, b: 8};
+        const FLASH_RGB = {r: 255, g: 199, b: 199};
+
+        const PHRASES = [
+            "I love you", "Seni seviyorum", "Te amo", "Je t'aime",
+            "Ich liebe dich", "Ti amo", "Eu te amo", "Я тебя люблю",
+            "사랑해", "愛してる", "我爱你", "मैं तुमसे प्यार करता हूँ",
+            "Σ' αγαπώ", "Ik hou van jou", "Jag älskar dig", "Kocham cię",
+            "ฉันรักเธอ", "Anh yêu em", "Aku cinta kamu", "Я тебе кохаю"
+        ];
+
+        let W, H;
+        let POLY, EDGES, YMAX, YMIN, CY;
+        let allItems = [];
+        let active = [];
+        let settled = [];
+        let startTime = null;
+        let rngState = 11;
+        
+        let frameCount = 0;
+        let spawnAccumulator = 0;
+        let totalItemsToSpawn = 0;
+        
+        let glowTimer = 0;
+        let glowingItems = []; 
+        let glowAlpha = 0;     
+
+        let snowflakes = [];
+        const SNOW_COUNT = 80;
+
+        function rand() {
+            rngState = (rngState * 16807) % 2147483647;
+            return (rngState - 1) / 2147483646;
+        }
+
+        function mix(c1, c2, k) {
+            return { 
+                r: Math.max(0, Math.min(255, c1.r + (c2.r - c1.r) * k)),
+                g: Math.max(0, Math.min(255, c1.g + (c2.g - c1.g) * k)),
+                b: Math.max(0, Math.min(255, c1.b + (c2.b - c1.b) * k))
+            };
+        }
+        function rgbStr(c) { return `rgb(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)})`; }
+
+        class Snowflake {
+            constructor() {
+                this.reset();
+                this.y = rand() * H;
+            }
+            reset() {
+                this.x = rand() * W;
+                this.y = -10;
+                this.size = 1 + rand() * 2.5;
+                this.speed = 0.3 + rand() * 1.0;
+                this.wind = (rand() - 0.5) * 0.5;
+                this.alpha = 0.3 + rand() * 0.5;
+                this.phase = rand() * Math.PI * 2;
+            }
+            update() {
+                this.y += this.speed;
+                this.x += Math.sin(this.phase) * 0.5 + this.wind;
+                this.phase += 0.02;
+                
+                if (this.y > H + 10) {
+                    this.reset();
+                }
+                if (this.x > W + 10) this.x = -10;
+                if (this.x < -10) this.x = W + 10;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                ctx.fill();
+            }
+        }
+
+        function buildHeart() {
+            const s = Math.min(W, H) / 800 * SC;
+            const screenScale = Math.min(W, H) / 800;
+            
+            POLY = [];
+            for (let i = 0; i < 720; i++) {
+                const a = 2 * Math.PI * i / 720;
+                const x = 16 * Math.pow(Math.sin(a), 3);
+                const y = 13 * Math.cos(a) - 5 * Math.cos(2*a) - 2 * Math.cos(3*a) - Math.cos(4*a);
+                POLY.push({ x: x * s, y: -y * s + OY * screenScale });
+            }
+            
+            EDGES = [];
+            for (let i = 0; i < POLY.length; i++) {
+                EDGES.push([POLY[i], POLY[(i+1) % POLY.length]]);
+            }
+            
+            YMAX = Math.max(...POLY.map(p => p.y));
+            YMIN = Math.min(...POLY.map(p => p.y));
+            CY = (YMAX + YMIN) / 2;
+
+            let placed = [];
+            const rowH = 16 * screenScale;
+            const half = rowH / 2;
+            let phraseIdx = Math.floor(rand() * PHRASES.length);
+
+            for (let y = YMAX - half; y > YMIN + half; y -= rowH) {
+                let row = intersect(spans(y + half), spans(y - half));
+                for (let [lo, hi] of row) {
+                    lo += 4 * screenScale;
+                    hi -= 4 * screenScale;
+                    let cur = lo + rand() * 4 * screenScale;
+                    let line = [];
+
+                    while (true) {
+                        let fit = null;
+                        for (let k = 0; k < 10; k++) {
+                            let text = PHRASES[phraseIdx % PHRASES.length];
+                            phraseIdx++;
+                            let size = SIZES[Math.floor(rand() * SIZES.length)];
+                            
+                            ctx.font = `bold ${size * screenScale}px ${FONT_FAMILY}`;
+                            let w = ctx.measureText(text).width;
+
+                            if (cur + w <= hi) {
+                                fit = { text, size: size * screenScale, w };
+                                break;
+                            }
+                        }
+                        if (!fit) break;
+                        line.push({ x: cur + fit.w / 2, text: fit.text, size: fit.size, w: fit.w });
+                        cur += fit.w + GAP * screenScale;
+                    }
+
+                    if (line.length === 0) continue;
+
+                    if (line.length > 1) {
+                        let left = hi - (line[line.length - 1].x + line[line.length - 1].w / 2);
+                        for (let i = 0; i < line.length; i++) {
+                            line[i].x += left * i / (line.length - 1);
+                        }
+                    } else {
+                        line[0].x = (lo + hi) / 2;
+                    }
+
+                    for (let i = 0; i < line.length; i++) {
+                        let p = line[i];
+                        p.edge = (i === 0 || i === line.length - 1);
+                        p.y = y;
+                        p.rad = Math.min(1.0, mathDist(p.x, p.y, s));
+                        
+                        let wine = { r: 148, g: 0, b: 23 };
+                        let crimson = { r: 229, g: 12, b: 35 };
+                        let blood = { r: 250, g: 25, b: 40 };
+                        
+                        let base = mix(wine, crimson, 0.25 + 0.75 * p.rad);
+                        base = mix(base, blood, rand() * 0.35 + (p.edge ? 0.3 : 0));
+                        p.color = base;
+                        placed.push(p);
+                    }
+                }
+            }
+
+            let edges = placed.filter(p => p.edge);
+            let inner = placed.filter(p => !p.edge);
+            
+            edges.sort((a, b) => Math.atan2(a.x, a.y - CY) - Math.atan2(b.x, b.y - CY));
+            inner.sort((a, b) => (-a.rad + rand() * 0.08) - (-b.rad + rand() * 0.08));
+            
+            return [...edges, ...inner];
+        }
+
+        function spans(y) {
+            let xs = [];
+            for (let [p1, p2] of EDGES) {
+                if ((p1.y <= y && y < p2.y) || (p2.y <= y && y < p1.y)) {
+                    xs.push(p1.x + (y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y));
+                }
+            }
+            xs.sort((a, b) => a - b);
+            let res = [];
+            for (let i = 0; i < xs.length; i += 2) {
+                if (i + 1 < xs.length) res.push([xs[i], xs[i+1]]);
+            }
+            return res;
+        }
+
+        function intersect(A, B) {
+            let out = [];
+            for (let a of A) {
+                for (let b of B) {
+                    let lo = Math.max(a[0], b[0]), hi = Math.min(a[1], b[1]);
+                    if (hi - lo > 14) out.push([lo, hi]);
+                }
+            }
+            return out;
+        }
+
+        function mathDist(x, y, s) {
+            return Math.hypot(x / (16 * s), (y - CY) / (14.5 * s));
+        }
+
+        function animate(time) {
+            if (!startTime) startTime = time;
+
+            ctx.fillStyle = BG_HEX;
+            ctx.fillRect(0, 0, W, H);
+
+            for (let s of snowflakes) {
+                s.update();
+                s.draw();
+            }
+
+            ctx.save();
+            ctx.translate(W / 2, H / 2);
+
+            const screenScale = Math.min(W, H) / 800;
+            
+            frameCount++;
+            if (frameCount < DURATION * 60 && allItems.length > 0) {
+                spawnAccumulator += totalItemsToSpawn / (DURATION * 60);
+                while (spawnAccumulator >= 1 && allItems.length > 0) {
+                    spawnAccumulator -= 1;
+                    let p = allItems.shift();
+                    p.f = 0;
+                    p.dx = (rand() - 0.5) * 10 * screenScale;
+                    active.push(p);
+                }
+            } else if (allItems.length > 0) {
+                while (allItems.length > 0) {
+                    let p = allItems.shift();
+                    p.f = 0;
+                    p.dx = (rand() - 0.5) * 10 * screenScale;
+                    active.push(p);
+                }
+            }
+
+            if (active.length === 0 && allItems.length === 0) {
+                glowTimer++;
+                if (glowTimer % 36 === 0) {
+                    glowingItems = [];
+                    const count = 5 + Math.floor(rand() * 11); 
+                    for (let k = 0; k < count; k++) {
+                        glowingItems.push(settled[Math.floor(rand() * settled.length)]);
+                    }
+                    glowAlpha = 0.9; 
+                }
+                if (glowAlpha > 0) {
+                    glowAlpha -= 0.01; 
+                    if (glowAlpha < 0) glowAlpha = 0;
+                }
+            }
+
+            for (let p of settled) {
+                let col = p.color;
+                if (glowingItems.includes(p) && glowAlpha > 0) {
+                    col = mix(p.color, FLASH_RGB, glowAlpha);
+                }
+                ctx.font = `bold ${p.size}px ${FONT_FAMILY}`;
+                ctx.fillStyle = rgbStr(col);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(p.text, p.x, p.y);
+            }
+
+            for (let i = active.length - 1; i >= 0; i--) {
+                let p = active[i];
+                p.f += 1;
+                let u = Math.min(1, p.f / ANIM);
+                let e = 1 - Math.pow(1 - u, 3);
+                
+                let hover = (1 - e) * LIFT * screenScale;
+                let px = p.x + p.dx * (1 - e);
+                let py = p.y - hover;
+                
+                let flash = 0.75 * Math.sin(Math.PI * Math.max(0, Math.min(1, (u - 0.55) / 0.45)));
+                let col = mix(mix(BG_RGB, p.color, Math.pow(e, 1.5)), FLASH_RGB, flash);
+                
+                ctx.font = `bold ${p.size}px ${FONT_FAMILY}`;
+                ctx.fillStyle = rgbStr(col);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(p.text, px, py);
+
+                if (u >= 1) {
+                    active.splice(i, 1);
+                    settled.push(p);
+                }
+            }
+
+            ctx.restore();
+            requestAnimationFrame(animate);
+        }
+
+        function startExperience() {
+            if (musicStarted) return;
+            musicStarted = true;
+            
+            music.play().catch(e => console.log("Ошибка воспроизведения:", e));
+            hint.classList.add('hidden');
+            
+            init();
+        }
+
+        document.body.addEventListener('click', startExperience);
+        document.body.addEventListener('touchstart', startExperience);
+
+        function init() {
+            W = window.innerWidth;
+            H = window.innerHeight;
+            canvas.width = W;
+            canvas.height = H;
+            
+            rngState = 11;
+            allItems = buildHeart();
+            totalItemsToSpawn = allItems.length;
+            active = [];
+            settled = [];
+            startTime = null;
+            frameCount = 0;
+            spawnAccumulator = 0;
+            glowTimer = 0;
+            glowingItems = [];
+            glowAlpha = 0;
+            
+            snowflakes = [];
+            for (let i = 0; i < SNOW_COUNT; i++) {
+                snowflakes.push(new Snowflake());
+            }
+            
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', () => {
+            if (musicStarted) init();
+        });
+    </script>
+</body>
+</html>
