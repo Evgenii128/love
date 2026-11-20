@@ -11,9 +11,8 @@
             height: 100vh; touch-action: none;
             cursor: pointer;
         }
-        canvas { display: block; }
+        canvas { display: block; position: absolute; z-index: 1; }
         
-        /* Стили для кнопки запуска */
         #start-btn {
             position: absolute;
             padding: 15px 30px;
@@ -25,7 +24,7 @@
             font-size: 18px;
             font-weight: bold;
             cursor: pointer;
-            z-index: 50;
+            z-index: 1000;
             transition: all 0.3s ease;
             animation: pulse 2s infinite;
             text-shadow: 0 0 10px rgba(255, 60, 100, 0.5);
@@ -40,10 +39,40 @@
             50% { transform: scale(1.05); opacity: 1; }
         }
 
-        /* Водяной знак */
+        #sound-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 16px; 
+            background: rgba(255, 255, 255, 0.08); 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+            border-radius: 20px; 
+            color: rgba(255, 255, 255, 0.7);
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            display: none; 
+            justify-content: center;
+            align-items: center;
+            gap: 6px; 
+            cursor: pointer;
+            z-index: 9999;
+            transition: all 0.3s;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            backdrop-filter: blur(5px); 
+            -webkit-backdrop-filter: blur(5px);
+        }
+        #sound-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.4);
+            color: #fff;
+        }
+
         #watermark {
             position: absolute;
-            bottom: 15px;
+            bottom: 30px;
             left: 20px;
             color: rgba(255, 255, 255, 0.2);
             font-family: 'Arial', sans-serif;
@@ -58,33 +87,37 @@
 </head>
 <body>
     <canvas id="c"></canvas>
-    
-    <!-- Кнопка запуска -->
-    <div id="start-btn">♥ Нажми, чтобы открыть и проигрывать музыку</div>
-
-    <!-- Водяной знак -->
+    <div id="start-btn">♥ Нажми, чтобы открыть</div>
     <div id="watermark">SKVIZI</div>
 
-    <!-- Музыка -->
-    <audio id="bg-music" loop>
-        <source src="music.mp3" type="audio/mpeg">
-    </audio>
+    <div id="sound-btn">
+        <span id="sound-icon">🔊</span>
+        <span id="sound-text">ЗВУК ВКЛ</span>
+    </div>
 
     <script>
         const canvas = document.getElementById('c');
         const ctx = canvas.getContext('2d');
-        const music = document.getElementById('bg-music');
         const startBtn = document.getElementById('start-btn');
+        const soundBtn = document.getElementById('sound-btn');
+        const soundIcon = document.getElementById('sound-icon');
+        const soundText = document.getElementById('sound-text');
+        
         let musicStarted = false;
+        
+        let audioCtx = null;
+        let audioBuffer = null;
+        let sourceNode = null;
+        let gainNode = null;
+        let isPlaying = false;
 
-        // --- НАСТРОЙКИ ---
         const SC = 21;
         const OY = 20;
         const DURATION = 16;
         const ANIM = 42;
         const LIFT = 34;
-        const GAP = 6;
-        const SIZES = [9, 10, 11, 12];
+        const GAP = 8;
+        const SIZES = [11, 12, 13, 14];
         const FONT_FAMILY = "Arial";
         const BG_HEX = "#060208";
         const BG_RGB = {r: 6, g: 2, b: 8};
@@ -163,8 +196,8 @@
         }
 
         function buildHeart() {
-            const s = Math.min(W, H) / 800 * SC;
-            const screenScale = Math.min(W, H) / 800;
+            const s = Math.min(W, H) / 700 * SC; 
+            const screenScale = Math.min(W, H) / 700;
             
             POLY = [];
             for (let i = 0; i < 720; i++) {
@@ -184,7 +217,7 @@
             CY = (YMAX + YMIN) / 2;
 
             let placed = [];
-            const rowH = 16 * screenScale;
+            const rowH = 20 * screenScale; 
             const half = rowH / 2;
             let phraseIdx = Math.floor(rand() * PHRASES.length);
 
@@ -298,7 +331,7 @@
             ctx.save();
             ctx.translate(W / 2, H / 2);
 
-            const screenScale = Math.min(W, H) / 800;
+            const screenScale = Math.min(W, H) / 700; 
             
             frameCount++;
             if (frameCount < DURATION * 60 && allItems.length > 0) {
@@ -376,25 +409,74 @@
             requestAnimationFrame(animate);
         }
 
-        // Запуск по кнопке
-        function startExperience() {
+        async function startExperience(e) {
+            if (e) e.preventDefault();
             if (musicStarted) return;
             musicStarted = true;
             
-            // Прячем кнопку
             startBtn.style.display = 'none';
-            
-            // Запускаем музыку
-            music.play().catch(e => {
-                console.log("Ошибка воспроизведения:", e);
-            });
-            
-            // Запускаем анимацию
+            soundBtn.style.display = 'flex';
+
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
+                const response = await fetch('music.mp3');
+                const arrayBuffer = await response.arrayBuffer();
+                audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+                sourceNode = audioCtx.createBufferSource();
+                sourceNode.buffer = audioBuffer;
+                sourceNode.loop = true;
+
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = 1;
+
+                sourceNode.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                sourceNode.start(0);
+                isPlaying = true;
+                soundIcon.innerText = "🔊";
+                soundText.innerText = "ЗВУК ВКЛ";
+
+            } catch (err) {
+                console.log("Ошибка аудио:", err);
+            }
+
             init();
         }
 
-        startBtn.addEventListener('click', startExperience);
-        startBtn.addEventListener('touchstart', startExperience);
+        function toggleSound(e) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            if (!gainNode || !audioCtx) return;
+
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            if (isPlaying) {
+                gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+                isPlaying = false;
+                soundIcon.innerText = "🔇";
+                soundText.innerText = "ЗВУК ВЫКЛ";
+            } else {
+                gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+                isPlaying = true;
+                soundIcon.innerText = "🔊";
+                soundText.innerText = "ЗВУК ВКЛ";
+            }
+        }
+
+        startBtn.onpointerdown = startExperience;
+        soundBtn.onpointerdown = toggleSound;
 
         function init() {
             W = window.innerWidth;
