@@ -2,16 +2,25 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Love Heart</title>
     <style>
         body {
             margin: 0; padding: 0; background-color: #060208;
-            overflow: hidden; display: flex; justify-content: center; align-items: center;
-            height: 100vh; touch-action: none;
+            overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; height: 100dvh; /* 100dvh решает проблему с панелями браузера на телефоне */
+            touch-action: none;
             cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
         }
-        canvas { display: block; position: absolute; z-index: 1; }
+        canvas { 
+            display: block; 
+            position: absolute; 
+            z-index: 1; 
+            width: 100%;
+            height: 100%;
+        }
         
         #start-btn {
             position: absolute;
@@ -409,7 +418,7 @@
             requestAnimationFrame(animate);
         }
 
-        async function startExperience(e) {
+        function startExperience(e) {
             if (e) e.preventDefault();
             if (musicStarted) return;
             musicStarted = true;
@@ -419,32 +428,39 @@
 
             try {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                
                 if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
+                    audioCtx.resume();
                 }
 
-                const response = await fetch('music.mp3');
-                const arrayBuffer = await response.arrayBuffer();
-                audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-                sourceNode = audioCtx.createBufferSource();
-                sourceNode.buffer = audioBuffer;
-                sourceNode.loop = true;
+                const emptyBuffer = audioCtx.createBuffer(1, 1, 22050);
+                const emptySource = audioCtx.createBufferSource();
+                emptySource.buffer = emptyBuffer;
+                emptySource.connect(audioCtx.destination);
+                emptySource.start(0);
 
                 gainNode = audioCtx.createGain();
                 gainNode.gain.value = 1;
-
-                sourceNode.connect(gainNode);
                 gainNode.connect(audioCtx.destination);
-                
-                sourceNode.start(0);
-                isPlaying = true;
-                soundIcon.innerText = "🔊";
-                soundText.innerText = "ЗВУК ВКЛ";
+
+                fetch('music.mp3')
+                    .then(response => response.arrayBuffer())
+                    .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+                    .then(buffer => {
+                        audioBuffer = buffer;
+                        sourceNode = audioCtx.createBufferSource();
+                        sourceNode.buffer = audioBuffer;
+                        sourceNode.loop = true;
+                        sourceNode.connect(gainNode);
+                        sourceNode.start(0);
+                        
+                        isPlaying = true;
+                        soundIcon.innerText = "🔊";
+                        soundText.innerText = "ЗВУК ВКЛ";
+                    })
+                    .catch(err => console.log("Ошибка загрузки аудио:", err));
 
             } catch (err) {
-                console.log("Ошибка аудио:", err);
+                console.log("Ошибка инициализации:", err);
             }
 
             init();
@@ -479,8 +495,9 @@
         soundBtn.onpointerdown = toggleSound;
 
         function init() {
-            W = window.innerWidth;
-            H = window.innerHeight;
+            // Берем размеры напрямую у canvas (он растянут на 100% экрана через CSS)
+            W = canvas.clientWidth;
+            H = canvas.clientHeight;
             canvas.width = W;
             canvas.height = H;
             
